@@ -1,0 +1,7 @@
+# Generated: rebuilt by scripts/build-data.mjs
+data/
+dist/
+
+node_modules/
+.wrangler/
+.dev.vars

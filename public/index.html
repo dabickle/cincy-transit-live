@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cincy Transit Live</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1116; }
+    canvas { display: block; }
+
+    #about {
+      width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 64px);
+      padding: 0; border: 1px solid #2a313c; border-radius: 10px;
+      background: #14181f; color: #d6dbe2; color-scheme: dark;
+      font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    #about::backdrop { background: rgba(5, 7, 10, 0.6); }
+    #about .body { padding: 20px 24px 24px; overflow-y: auto; max-height: calc(100vh - 66px); box-sizing: border-box; }
+    #about h1 { margin: 0 90px 4px 0; font-size: 18px; color: #f0f2f5; }
+    #about h2 { margin: 20px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: #8b95a3; }
+    #about p { margin: 6px 0; }
+    #about ul { margin: 6px 0; padding-left: 18px; }
+    #about li { margin: 6px 0; }
+    #about a { color: #8ec5ff; }
+    #about .src { color: #f0f2f5; font-weight: 600; }
+    #about .lic { color: #a7b0bc; }
+    #about .muted { color: #8b95a3; font-size: 12px; }
+    #about .asis {
+      margin: 14px 0 4px; padding: 10px 14px; border-radius: 8px;
+      border: 1px solid #5a4a22; border-left: 4px solid #e0b040; background: #221d10; color: #efe3c4;
+    }
+    #about .asis b { color: #ffd77a; }
+    #about details { margin: 6px 0; }
+    #about summary { cursor: pointer; color: #8ec5ff; }
+    #about pre { white-space: pre-wrap; font-size: 11.5px; color: #a7b0bc; background: #0f1217; padding: 10px 12px; border-radius: 6px; margin: 8px 0 0; }
+    #about .close {
+      position: absolute; top: 14px; right: 26px; z-index: 1;
+      border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer;
+      background: #262c36; color: #d6dbe2; font: inherit;
+    }
+    #about .close:hover { background: #333b47; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+</head>
+<body>
+  <dialog id="about">
+    <form method="dialog"><button class="close" aria-label="Close">Close ✕</button></form>
+    <div class="body">
+      <h1>About this map</h1>
+      <p>Live buses for Cincinnati Metro and TANK (Northern Kentucky), drawn over neighborhood, city
+        and township boundaries. Not an official app and not affiliated with or endorsed by SORTA/Metro, TANK,
+        or any government listed below. Positions and predictions can be wrong or late: don't rely on this for
+        trip planning.</p>
+      <p class="asis"><b>Provided as-is.</b> This sketch and its data come without warranty of any kind, express
+        or implied, including fitness for a particular purpose. The authors and data providers aren't liable for
+        anything arising from its use. The code is released under the <a href="#license">MIT License</a>.</p>
+
+      <h2>How it was made</h2>
+      <ul>
+        <li>Written with <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a>
+          (Anthropic) as a <a href="https://p5js.org" target="_blank" rel="noopener">p5.js</a> sketch, the
+          JavaScript successor to Processing.js.</li>
+        <li>A small Node.js server with no dependencies fetches the transit feeds (they can't be read from a
+          browser directly), decodes GTFS-realtime protobufs with a hand-written reader, unpacks the
+          timetable zips, and caches boundary data in <code>data/</code>.</li>
+        <li><b>Lateness</b> is the predicted arrival at the next stop minus the scheduled time.
+          Metro's comes from its trip-update predictions against the timetable; TANK's from the delay its feed reports.</li>
+        <li><b>Time lost</b> is history this server records itself: every 30 s it notes how much each bus's
+          delay changed and where, keeps 24 hours, and sums it into ~220 m grid cells. Nearest stop names come
+          from the timetables, which also mark route ends (where layovers happen) and timepoints (where early
+          buses hold).</li>
+        <li><b>Bunching</b>: two buses on the same route, heading the same way, within 500 m of each other.</li>
+      </ul>
+
+      <h2>Data sources</h2>
+      <ul>
+        <li><span class="src">Cincinnati Metro (SORTA)</span>: GTFS timetable and GTFS-realtime vehicle
+          positions, trip updates and alerts.
+          <a href="https://www.go-metro.com/about/developer-data/" target="_blank" rel="noopener">Developer data</a>.<br>
+          <span class="lic">License: SORTA/Metro developer data license: non-exclusive, limited and revocable
+          rights to use, reproduce and redistribute. Provided "as is" without warranty. SORTA/Metro keeps
+          ownership, and its trademarks may not be used with the data without written approval.</span></li>
+        <li><span class="src">TANK (Transit Authority of Northern Kentucky)</span>: GTFS timetable and
+          GTFS-realtime feeds from its
+          <a href="https://tank.rideralerts.com/InfoPoint/" target="_blank" rel="noopener">InfoPoint</a> rider
+          site (Avail Technologies). <a href="https://www.tankbus.org" target="_blank" rel="noopener">tankbus.org</a>.<br>
+          <span class="lic">License: offered free to developers; no written license was found. Rights remain with TANK.</span></li>
+        <li><span class="src">Cincinnati neighborhoods</span>: City of Cincinnati / CAGIS
+          (Cincinnati Area Geographic Information System),
+          <a href="https://arcgis.cincinnati-oh.gov/arcgis/rest/services/Core/miscellaneous/MapServer/1" target="_blank" rel="noopener">neighborhoods layer</a>.<br>
+          <span class="lic">Terms: the <a href="https://cagis.org/Opendata/" target="_blank" rel="noopener">CAGIS data
+          disclaimer</a>: provided "as is", with no warranty and no liability for defects.</span></li>
+        <li><span class="src">Covington neighborhoods</span>: City of Covington,
+          <a href="https://services2.arcgis.com/oF37xW75ElmQLUav/arcgis/rest/services/Neighborhoods/FeatureServer/0" target="_blank" rel="noopener">neighborhoods layer</a>
+          on ArcGIS Online (see also <a href="https://www.covingtonky.gov" target="_blank" rel="noopener">CovData</a>).<br>
+          <span class="lic">License: none stated on the layer. Used from the public service with credit.</span></li>
+        <li><span class="src">Northern Kentucky city limits</span>: Commonwealth of Kentucky,
+          <a href="https://kygisportalservices.ky.gov/server/rest/services/EconDev/CityLimitsMap/MapServer/0" target="_blank" rel="noopener">KY city limits</a>
+          via <a href="https://kygeonet.ky.gov/" target="_blank" rel="noopener">KyGeoNet</a>. Created by the Kentucky
+          Transportation Cabinet and updated by the Division of Geographic Information. Boone, Kenton and Campbell County
+          boundaries come from the Northern Kentucky Area Planning Commission.<br>
+          <span class="lic">License: none stated on the layer. Used from the public service with credit.</span></li>
+        <li><span class="src">Ohio cities, villages and townships; Kentucky communities; counties; Ohio River</span>:
+          U.S. Census Bureau <a href="https://tigerweb.geo.census.gov/" target="_blank" rel="noopener">TIGERweb</a>
+          (places, county subdivisions, census-designated places, counties, hydrography).<br>
+          <span class="lic">License: public domain (a U.S. government work, 17 U.S.C. § 105).</span></li>
+      </ul>
+
+      <h2>Software</h2>
+      <ul>
+        <li><a href="https://p5js.org" target="_blank" rel="noopener">p5.js</a> 1.9.4, loaded from cdnjs.
+          <span class="lic">License: LGPL-2.1.</span></li>
+        <li><a href="https://gtfs.org/documentation/realtime/reference/" target="_blank" rel="noopener">GTFS and GTFS-realtime</a>
+          specifications. <span class="lic">License: Apache 2.0.</span></li>
+        <li><a href="https://nodejs.org" target="_blank" rel="noopener">Node.js</a> built-ins only (http, zlib, fs). No npm packages.</li>
+      </ul>
+
+      <h2 id="license">License for this sketch</h2>
+      <p>The sketch's own code (the p5.js sketch and its Node.js server) is released under the MIT License.
+        That covers the code only: the transit and boundary data stay under their providers' terms above.</p>
+      <details>
+        <summary>Full MIT License text</summary>
+        <pre>MIT License
+
+Copyright (c) 2026 Cincy Transit Live contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.</pre>
+      </details>
+
+      <p class="muted">These license summaries were checked in October 2026 and aren't legal advice. Read each
+        provider's own terms before reusing their data.</p>
+    </div>
+  </dialog>
+  <script src="sketch.js"></script>
+</body>
+</html>
