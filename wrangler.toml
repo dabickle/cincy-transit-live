@@ -1,0 +1,27 @@
+# Cloudflare Workers config. `npm run deploy` builds dist/ and deploys.
+name = "cincy-transit-live"
+main = "src/worker.js"
+compatibility_date = "2026-09-15"
+
+# dist/ is built by scripts/build-data.mjs. Requests for files in it are served
+# straight from Cloudflare's edge; only /api/* reaches the Worker.
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+# The one Recorder: polls the agencies' feeds and keeps 24 h of history in
+# its SQLite storage.
+[[durable_objects.bindings]]
+name = "RECORDER"
+class_name = "Recorder"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Recorder"]
+
+# Makes sure the Recorder's 30 s alarm is running, even with no visitors.
+[triggers]
+crons = ["*/10 * * * *"]
+
+[observability]
+enabled = true

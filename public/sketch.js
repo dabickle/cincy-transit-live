@@ -1,14 +1,15 @@
 // Cincinnati Metro + TANK (Northern Kentucky) — live bus positions in p5.js.
 // Metro buses are circles, TANK buses are squares.
 //
-// Data comes from server.js, which proxies both agencies' GTFS-realtime feeds:
-//   /api/manifest  versioned URLs (cached for good) for the static data:
-//                    network: route list + route shapes (static GTFS)
-//                    areas: neighborhoods, cities, villages, townships
-//                    geography: the Ohio River, and counties tagged by state
+// Static data is built by scripts/build-data.mjs; /manifest.json names the
+// current versioned files (cached for good):
+//   network: route list + route shapes (static GTFS)
+//   areas: neighborhoods, cities, villages, townships
+//   geography: the Ohio River, and counties tagged by state
+// Live data comes from the Cloudflare Worker (src/worker.js):
 //   /api/vehicles  live vehicle positions, with each bus's delay in seconds
 //   /api/alerts    service alerts
-//   /api/timeloss   where buses have been losing time (recorded by the server)
+//   /api/timeloss   where buses have been losing time (recorded every 30 s)
 //
 // To keep bandwidth down, polling stops while the tab is hidden or nobody has
 // touched the page for IDLE_MS, and picks up again on the next mouse/key/touch.
@@ -127,14 +128,20 @@ function fitView(b = bounds, frac = 0.9) {
 // ---------------------------------------------------------------------------
 // Data
 
-// Static data lives at versioned URLs the browser and any CDN cache for good;
-// the manifest (cached for minutes) names the current versions.
+// Static data lives at versioned URLs (/v/name.<hash>.json) that browsers and
+// Cloudflare cache for good; the manifest (cached for minutes) names the
+// current versions. If a deploy replaced them since the manifest was read,
+// read it again and retry once.
 let manifest = null;
-async function getStatic(name) {
-  manifest ||= fetch("/api/manifest").then((r) => r.json());
+async function getStatic(name, retry = true) {
+  manifest ||= fetch("/manifest.json", retry ? undefined : { cache: "no-cache" }).then((r) => r.json());
   const url = (await manifest)[name];
   if (!url) throw new Error(`${name} isn't available yet`);
   const res = await fetch(url);
+  if (res.status === 404 && retry) {
+    manifest = null;
+    return getStatic(name, false);
+  }
   if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
   return res.json();
 }

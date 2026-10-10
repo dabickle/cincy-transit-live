@@ -20,6 +20,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-This license covers this project's own code (server.js and public/). The
+This license covers this project's own code (src/, scripts/, public/). The
 transit and boundary data it fetches belong to their providers and are under
 their own terms; see the About page in the app.

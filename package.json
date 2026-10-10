@@ -1,0 +1,16 @@
+{
+  "name": "cincy-transit-live",
+  "private": true,
+  "type": "module",
+  "description": "Live map of Cincinnati Metro and TANK buses, on Cloudflare Workers",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build-data.mjs",
+    "dev": "node scripts/build-data.mjs && wrangler dev",
+    "deploy": "node scripts/build-data.mjs && wrangler deploy",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "4.141.0"
+  }
+}

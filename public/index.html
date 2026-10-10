@@ -60,12 +60,13 @@
         <li>Written with <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a>
           (Anthropic) as a <a href="https://p5js.org" target="_blank" rel="noopener">p5.js</a> sketch, the
           JavaScript successor to Processing.js.</li>
-        <li>A small Node.js server with no dependencies fetches the transit feeds (they can't be read from a
-          browser directly), decodes GTFS-realtime protobufs with a hand-written reader, unpacks the
-          timetable zips, and caches boundary data in <code>data/</code>.</li>
+        <li>Runs on <a href="https://workers.cloudflare.com" target="_blank" rel="noopener">Cloudflare Workers</a>.
+          A build step turns the timetables and boundary data into static files. A Worker fetches the live
+          transit feeds (they can't be read from a browser directly) and decodes the GTFS-realtime protobufs
+          with a hand-written reader.</li>
         <li><b>Lateness</b> is the predicted arrival at the next stop minus the scheduled time.
           Metro's comes from its trip-update predictions against the timetable; TANK's from the delay its feed reports.</li>
-        <li><b>Time lost</b> is history this server records itself: every 30 s it notes how much each bus's
+        <li><b>Time lost</b> is history this site records itself: every 30 s it notes how much each bus's
           delay changed and where, keeps 24 hours, and sums it into ~220 m grid cells. Nearest stop names come
           from the timetables, which also mark route ends (where layovers happen) and timepoints (where early
           buses hold).</li>
@@ -112,11 +113,12 @@
           <span class="lic">License: LGPL-2.1.</span></li>
         <li><a href="https://gtfs.org/documentation/realtime/reference/" target="_blank" rel="noopener">GTFS and GTFS-realtime</a>
           specifications. <span class="lic">License: Apache 2.0.</span></li>
-        <li><a href="https://nodejs.org" target="_blank" rel="noopener">Node.js</a> built-ins only (http, zlib, fs). No npm packages.</li>
+        <li>No runtime packages: the Worker uses only built-in web APIs, and the build script only
+          <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js</a> built-ins.</li>
       </ul>
 
       <h2 id="license">License for this sketch</h2>
-      <p>The sketch's own code (the p5.js sketch and its Node.js server) is released under the MIT License.
+      <p>The sketch's own code (the p5.js sketch, its Worker and its build script) is released under the MIT License.
         That covers the code only: the transit and boundary data stay under their providers' terms above.</p>
       <details>
         <summary>Full MIT License text</summary>
