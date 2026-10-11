@@ -3,6 +3,12 @@ name = "cincy-transit-live"
 main = "src/worker.js"
 compatibility_date = "2026-09-15"
 
+# Served only at its own domain; the *.workers.dev address is off, so search
+# engines see one copy of the site. (If you fork this, change or remove the
+# route; set workers_dev = true for a quick start without a domain.)
+workers_dev = false
+routes = [{ pattern = "cincybusmap.com", custom_domain = true }]
+
 # dist/ is built by scripts/build-data.mjs. Requests for files in it are served
 # straight from Cloudflare's edge; only /api/* reaches the Worker.
 [assets]

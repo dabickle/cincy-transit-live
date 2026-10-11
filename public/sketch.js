@@ -992,7 +992,7 @@ function drawHeader(list) {
   textAlign(LEFT, TOP);
   textStyle(BOLD);
   textSize(16);
-  text("Cincinnati + NKY transit · live", x + 12, y + 10);
+  text("Cincy Bus Map · live", x + 12, y + 10);
   textStyle(NORMAL);
   textSize(12);
   // "About" link in the title row: sources, licences, how it was made.

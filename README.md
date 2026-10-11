@@ -1,4 +1,6 @@
-# Cincy Transit Live
+# Cincy Bus Map
+
+Live at **[cincybusmap.com](https://cincybusmap.com)**.
 
 A live map of Cincinnati Metro and TANK (Northern Kentucky) buses, drawn as a
 [p5.js](https://p5js.org) sketch over neighborhood, city and township
@@ -371,6 +373,7 @@ src/shared/otp.js         stop passages and on-time totals
 scripts/build-data.mjs    builds dist/ from GTFS + boundary sources
 public/index.html         page shell, p5.js from cdnjs, About dialog
 public/sketch.js          the p5.js sketch
+public/favicon.svg, apple-touch-icon.png, og.png   icons and link-preview image
 test/shared.test.js       unit tests for src/shared (npm test)
 wrangler.toml             Cloudflare config: assets, Durable Object, cron
 .github/workflows/        test, build and deploy
@@ -394,12 +397,15 @@ requests are tested and built, but not deployed.
    template. Note your **Account ID** from the Workers overview page.
 3. In GitHub, go to **Settings → Secrets and variables → Actions** and add the
    repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
-4. Push to `main`, or run the workflow by hand from the Actions tab. The site
-   appears at `https://cincy-transit-live.<your-subdomain>.workers.dev`.
-5. **Add your domain**: Workers → cincy-transit-live → Settings → Domains &
-   Routes → Add → Custom domain. The domain's DNS must be on Cloudflare. This
-   also turns on the Worker's Cache API, so most API requests are answered
-   from the local data centre.
+4. **Set the domain** in `wrangler.toml` (`routes`, and `SITE` in
+   `scripts/build-data.mjs` plus the canonical and Open Graph URLs in
+   `public/index.html`). The domain's DNS must be on Cloudflare; the deploy
+   attaches it as a Worker custom domain. A custom domain also turns on the
+   Worker's Cache API, so most API requests are answered from the local data
+   centre. To try it without a domain first, set `workers_dev = true` and
+   remove `routes`; it then appears at
+   `https://cincy-transit-live.<your-subdomain>.workers.dev`.
+5. Push to `main`, or run the workflow by hand from the Actions tab.
 
 **Deploying from your machine instead:** `npx wrangler login`, then
 `npm run deploy`.
@@ -414,6 +420,13 @@ requests are tested and built, but not deployed.
 - Set a **billing notification** in Cloudflare (Manage Account → Billing →
   Billable Usage notifications) as a guardrail.
 - `npx wrangler tail` streams the live Worker's logs.
+- **Search engines**: the page carries a description, canonical URL, Open
+  Graph preview (`public/og.png`) and JSON-LD; the build writes `robots.txt`,
+  `sitemap.xml` and a crawlable route list into the About dialog. Verify the
+  domain in Google Search Console and Bing Webmaster Tools and submit
+  `/sitemap.xml`. For `www`, add a Cloudflare Redirect Rule ("Redirect from
+  WWW to root" template) rather than a second custom domain, so there's only
+  one copy of the site.
 
 ## Known limits
 

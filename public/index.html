@@ -3,10 +3,49 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cincy Transit Live</title>
+  <title>Cincy Bus Map – Live Cincinnati &amp; Northern Kentucky Bus Tracker</title>
+  <meta name="description" content="Live map of every Cincinnati Metro and TANK bus: where each one is, how late it's running, bunching, where buses lose time, and on-time trends by route.">
+  <link rel="canonical" href="https://cincybusmap.com/">
+  <meta name="theme-color" content="#0e1116">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+  <!-- Link previews (Slack, iMessage, Facebook, X…) -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Cincy Bus Map">
+  <meta property="og:title" content="Cincy Bus Map – live Cincinnati &amp; NKY buses">
+  <meta property="og:description" content="Live map of every Cincinnati Metro and TANK bus: where each one is, how late it's running, bunching, where buses lose time, and on-time trends by route.">
+  <meta property="og:url" content="https://cincybusmap.com/">
+  <meta property="og:image" content="https://cincybusmap.com/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Map of Cincinnati and Northern Kentucky with live buses drawn on their routes">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Cincy Bus Map",
+    "url": "https://cincybusmap.com/",
+    "description": "Live map of every Cincinnati Metro and TANK bus: where each one is, how late it's running, bunching, where buses lose time, and on-time trends by route.",
+    "applicationCategory": "TravelApplication",
+    "operatingSystem": "Any (web browser)",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "areaServed": ["Cincinnati, Ohio", "Northern Kentucky"]
+  }
+  </script>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1116; }
     canvas { display: block; }
+    /* For screen readers and search engines: the map itself is a canvas. */
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+    #about .routes { columns: 2 220px; column-gap: 24px; padding-left: 0; list-style: none; }
+    #about .routes li { margin: 2px 0; break-inside: avoid; }
 
     #about {
       width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 64px);
@@ -43,10 +82,15 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
 </head>
 <body>
+  <header class="sr-only">
+    <h1>Cincy Bus Map</h1>
+    <p>Live map of every Cincinnati Metro and TANK bus: where each one is, how late it's running, bunching, where buses lose time, and on-time trends by route. Not an official app of Metro or TANK.</p>
+    <p>The map is drawn on a canvas; press I or use the About button for sources, routes and details.</p>
+  </header>
   <dialog id="about">
     <form method="dialog"><button class="close" aria-label="Close">Close ✕</button></form>
     <div class="body">
-      <h1>About this map</h1>
+      <h1>About Cincy Bus Map</h1>
       <p>Live buses for Cincinnati Metro and TANK (Northern Kentucky), drawn over neighborhood, city
         and township boundaries. Not an official app and not affiliated with or endorsed by SORTA/Metro, TANK,
         or any government listed below. Positions and predictions can be wrong or late: don't rely on this for
@@ -54,6 +98,10 @@
       <p class="asis"><b>Provided as-is.</b> This sketch and its data come without warranty of any kind, express
         or implied, including fitness for a particular purpose. The authors and data providers aren't liable for
         anything arising from its use. The code is released under the <a href="#license">MIT License</a>.</p>
+
+      <h2>Routes</h2>
+      <p>Open the map with one route pinned:</p>
+      <ul class="routes"><!-- ROUTES --></ul>
 
       <h2>How it was made</h2>
       <ul>
@@ -128,7 +176,7 @@
         <summary>Full MIT License text</summary>
         <pre>MIT License
 
-Copyright (c) 2026 Cincy Transit Live contributors
+Copyright (c) 2026 Cincy Bus Map contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
