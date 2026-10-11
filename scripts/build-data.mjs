@@ -177,7 +177,7 @@ function agencyNetwork(agency, files) {
 }
 
 // Scheduled times per trip, in seconds since the service day began, keyed by
-// stop_sequence. Delta-encoded to keep the file small:
+// stop_sequence, plus which stops are timepoints. Delta-encoded to keep the file small:
 //   dense trips (Metro numbers stops 1, 2, 3…): [firstSeq, t0, t1-t0, t2-t1, …]
 //   sparse trips (TANK numbers them 0, 50, 85…): { seq: [s0, s1-s0, …], t: [t0, t1-t0, …] }
 function agencyTimetable(files) {
@@ -200,7 +200,9 @@ function agencyTimetable(files) {
     const dense = seqs.every((s, i) => s === seqs[0] + i);
     trips[id] = dense ? [seqs[0], ...deltas(times)] : { seq: deltas(seqs), t: deltas(times) };
   }
-  return { tz, trips };
+  // Stop ids that are mostly timepoints, for on-time stats measured there.
+  const timepoints = [...stopRoles(files["stop_times.txt"])].filter(([, r]) => r.timepoint).map(([id]) => id);
+  return { tz, trips, timepoints };
 }
 
 // Per stop, from the timetable: whether it's mostly a route end (most trips

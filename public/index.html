@@ -70,6 +70,10 @@
           delay changed and where, keeps 24 hours, and sums it into ~220 m grid cells. Nearest stop names come
           from the timetables, which also mark route ends (where layovers happen) and timepoints (where early
           buses hold).</li>
+        <li><b>On-time history</b> (pin a route): each time a bus passes a stop, the site counts how late
+          it was there, and keeps daily totals indefinitely. "On time" means no more than 1 minute early or
+          5 minutes late, measured at timepoints. These are from live predictions, not the agencies' official
+          records, so they won't match published figures exactly.</li>
         <li><b>Bunching</b>: two buses on the same route, heading the same way, within 500 m of each other.</li>
       </ul>
 

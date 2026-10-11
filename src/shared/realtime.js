@@ -71,13 +71,16 @@ export function decodeVehicles(buf, agency) {
   return { timestamp: num(header, 3), vehicles };
 }
 
-// TANK's trip updates include each stop's delay. Metro's carry only predicted
-// times, so compare the prediction for the trip's next stop to the timetable.
+// Each trip's delay at its next stop: the first stop whose predicted time
+// hasn't passed. TANK's trip updates include each stop's delay; Metro's carry
+// only predicted times, so compare the prediction to the timetable.
 // `schedule` comes from loadSchedule() below, or is null if it isn't loaded.
+// Also returns each trip's next stop, [stop_sequence, stop_id], so a change
+// shows when a bus has passed a stop.
 export function decodeTripUpdates(buf, agency, schedule) {
   const feed = readMessage(buf);
   const now = num(msg(feed, 1), 3) || Math.floor(Date.now() / 1000);
-  const delays = {};
+  const delays = {}, next = {};
   for (const ent of msgs(feed, 2)) {
     const tu = msg(ent, 3);
     const trip = tu && msg(tu, 1);
@@ -88,18 +91,23 @@ export function decodeTripUpdates(buf, agency, schedule) {
     for (const stu of msgs(tu, 2)) {
       const ev = msg(stu, 2) || msg(stu, 3); // arrival, else departure
       if (!ev) continue;
-      if (ev[1]) { delays[tripId] = Number(BigInt.asIntN(32, ev[1][0])); break; }
-      const seq = num(stu, 1);
-      if (!times || seq == null) continue;
-      const predicted = num(ev, 2);
-      const scheduled = times instanceof Map ? times.get(seq) : times[seq];
-      if (predicted == null || scheduled == null || scheduled < 0 || predicted < now - 30) continue;
-      const delay = predicted - (day0 + scheduled);
-      if (Math.abs(delay) < 3 * 3600) delays[tripId] = delay; // ignore nonsense
+      const seq = num(stu, 1), predicted = num(ev, 2);
+      if (predicted != null && predicted < now - 30) continue; // already passed
+      let delay;
+      if (ev[1]) delay = Number(BigInt.asIntN(32, ev[1][0]));
+      else {
+        if (!times || seq == null || predicted == null) continue;
+        const scheduled = times instanceof Map ? times.get(seq) : times[seq];
+        if (scheduled == null || scheduled < 0) continue;
+        delay = predicted - (day0 + scheduled);
+        if (Math.abs(delay) >= 3 * 3600) continue; // ignore nonsense
+      }
+      delays[tripId] = delay;
+      next[tripId] = [seq, str(stu, 4)];
       break;
     }
   }
-  return { timestamp: now, delays };
+  return { timestamp: now, delays, next };
 }
 
 export function decodeAlerts(buf, agency) {
@@ -142,8 +150,9 @@ function todayIn(tz) {
 
 // Timetable as written by the build script (see agencyTimetable there) into
 // the form decodeTripUpdates wants: tripId → Int32Array indexed by
-// stop_sequence for dense trips, or a Map(stop_sequence → time) for sparse ones.
-export function loadSchedule({ tz, trips }) {
+// stop_sequence for dense trips, or a Map(stop_sequence → time) for sparse
+// ones. Timepoint stop ids become a Set.
+export function loadSchedule({ tz, trips, timepoints = [] }) {
   const undelta = (xs) => { let acc = 0; return xs.map((x) => (acc += x)); };
   const map = new Map();
   for (const id in trips) {
@@ -158,5 +167,5 @@ export function loadSchedule({ tz, trips }) {
       map.set(id, new Map(seqs.map((s, i) => [s, times[i]])));
     }
   }
-  return { tz, trips: map };
+  return { tz, trips: map, timepoints: new Set(timepoints) };
 }

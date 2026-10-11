@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decodeVehicles, decodeTripUpdates, decodeAlerts, loadSchedule } from "../src/shared/realtime.js";
 import { timeLoss, newSegments, stopsByCell, nearestStops, CELL_LAT, CELL_LON } from "../src/shared/timeloss.js";
+import { BINS, newPassages, addPassages, localDayHour } from "../src/shared/otp.js";
 
 // --- a tiny protobuf encoder, just enough to build GTFS-realtime feeds ---
 
@@ -80,10 +81,12 @@ test("Metro-style delay: prediction minus timetable, in the agency's time zone",
   assert.equal(delays.t1, 180);
 });
 
-test("TANK-style delay: taken from the feed", () => {
-  const update = [...bytes(1, str(1, "t9")), ...bytes(2, [...int(1, 50), ...bytes(2, int(1, -60))])];
-  const { delays } = decodeTripUpdates(feed(1, [[...str(1, "e"), ...bytes(3, update)]]), "tank", null);
-  assert.equal(delays.t9, -60);
+test("TANK-style delay: taken from the feed, at the next stop", () => {
+  const stu = (seq, stop, delay, time) => bytes(2, [...int(1, seq), ...bytes(2, [...int(1, delay), ...int(2, time)]), ...str(4, stop)]);
+  const update = [...bytes(1, str(1, "t9")), ...stu(50, "A", -60, 900), ...stu(85, "B", 120, 1100)];
+  const { delays, next } = decodeTripUpdates(feed(1000, [[...str(1, "e"), ...bytes(3, update)]]), "tank", null);
+  assert.equal(delays.t9, 120); // stop A's time has passed
+  assert.deepEqual(next.t9, [85, "B"]);
 });
 
 test("history segments: same trip, new report, sane gap", () => {
@@ -133,4 +136,27 @@ test("nearest stops merge opposite corners of one intersection", () => {
   const near = nearestStops(stops, 39.1, -84.5);
   assert.equal(near.length, 1);
   assert.deepEqual(near[0], ["Vine St & 12th St", 0, "t"]);
+});
+
+test("on-time: a passage when the next stop moves on", () => {
+  const last = new Map();
+  const tps = { metro: new Set(["TP"]) };
+  const bus = (seq, stop, delay, tripId = "a") => ({ id: "metro:1", agency: "metro", delay, nextStop: [seq, stop], trip: { tripId, routeId: "metro:1" } });
+  const t = Date.UTC(2026, 9, 11, 21, 30) / 1000; // 5:30 pm EDT
+  assert.deepEqual(newPassages([bus(4, "TP", 200)], last, tps, "America/New_York", t), []); // first sighting
+  assert.deepEqual(newPassages([bus(4, "TP", 240)], last, tps, "America/New_York", t + 30), []); // still heading there
+  assert.deepEqual(newPassages([bus(5, "X", 250)], last, tps, "America/New_York", t + 60), [["2026-10-11", "metro:1", 17, 1, 240]]);
+  assert.deepEqual(newPassages([bus(6, "Y", 250)], last, tps, "America/New_York", t + 600), []); // too long a gap
+  assert.deepEqual(newPassages([bus(9, "Z", 250, "b")], last, tps, "America/New_York", t + 630), []); // new trip
+});
+
+test("on-time: totals and local days across DST", () => {
+  assert.deepEqual(localDayHour(Date.UTC(2026, 10, 1, 4, 30) / 1000, "America/New_York"), ["2026-11-01", 0]); // EDT
+  assert.deepEqual(localDayHour(Date.UTC(2026, 10, 1, 6, 30) / 1000, "America/New_York"), ["2026-11-01", 1]); // EST
+  const totals = addPassages(new Map(), [["d", "r", 8, 1, -90], ["d", "r", 8, 1, 30], ["d", "r", 8, 1, 400], ["d", "r", 9, 0, 2000]]);
+  const bins = (i) => Object.assign(new Array(BINS.length + 1).fill(0), { [i]: 1 });
+  const at8 = totals.get("d|r|8|1");
+  assert.deepEqual(at8.slice(0, 2), [3, 340]);
+  assert.deepEqual(at8.slice(2), bins(0).map((x, i) => x + bins(2)[i] + bins(5)[i]));
+  assert.deepEqual(totals.get("d|r|9|0").slice(2), bins(7));
 });

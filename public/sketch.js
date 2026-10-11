@@ -10,6 +10,7 @@
 //   /api/vehicles  live vehicle positions, with each bus's delay in seconds
 //   /api/alerts    service alerts
 //   /api/timeloss   where buses have been losing time (recorded every 30 s)
+//   /api/otp       on-time stats per day and hour (kept indefinitely)
 //
 // To keep bandwidth down, polling stops while the tab is hidden or nobody has
 // touched the page for IDLE_MS, and picks up again on the next mouse/key/touch.
@@ -37,6 +38,9 @@ const ON_TIME = [-60, 300]; // usual transit definition: ≤1 min early, ≤5 mi
 const BUNCH_METERS = 500;  // same route + direction this close = bunched
 const ALERTS_MS = 120000;  // alerts change rarely
 const LOSS_POLL_MS = 300000; // time-lost history moves slowly
+const OTP_DAYS = 30;        // on-time trend shown for a pinned route
+const OTP_POLL_MS = 30 * 60000;
+const OTP_MIN = 20;         // passages before a day, hour or summary counts
 const IDLE_MS = 30 * 60000; // stop polling after this long without input
 const LOSS_MIN_SAMPLES = 3; // per grid cell before it's drawn
 const AREA_LOSS_MIN_SAMPLES = 10;
@@ -87,6 +91,7 @@ let showBunches = true;
 let loss = null;           // last /api/timeloss response, cells indexed by key
 let lossHours = 3;
 let hideTimepoints = false; // leave timepoint cells out of the time-lost lens
+let otp = null;            // pinned route's on-time trend, from /api/otp (see fetchOtp)
 let hoverCell = null;
 let headerBottom = 0;      // y where the header panel ends, for stacking below it
 let hotspotRows = [];      // clickable rows in the hotspots window
@@ -322,6 +327,7 @@ function wake() {
   paused = false;
   poll();
   if (colorBy === "loss" && Date.now() - (loss?.fetchedAt || 0) > LOSS_POLL_MS) fetchLoss();
+  if (focusRoute && Date.now() - (otp?.fetchedAt || 0) > OTP_POLL_MS) fetchOtp();
 }
 
 function ingest(feed) {
@@ -457,6 +463,66 @@ function summarizeLoss() {
   layerDirty = true;
 }
 
+// ---------------------------------------------------------------------------
+// On-time trend for the pinned route (totals recorded by the server)
+
+// Rows from /api/otp are [day or hour, timepoint (0/1), n, Σdelay, ...bins].
+// Stats are taken at timepoints, the stops the schedule promises, unless the
+// route has too few of those; then at every stop.
+async function fetchOtp() {
+  const want = focusRoute;
+  try {
+    const data = await (await fetch(`/api/otp?days=${OTP_DAYS}&route=${encodeURIComponent(want)}`)).json();
+    if (want !== focusRoute) return; // pin changed while this was in flight
+    const atTp = data.daily.filter((r) => r[1] === 1).reduce((n, r) => n + r[2], 0) >= OTP_MIN;
+    const group = (rows) => {
+      const m = new Map();
+      for (const [k, tp, n, total, ...bins] of rows) {
+        if (atTp && tp !== 1) continue;
+        let g = m.get(k);
+        if (!g) m.set(k, (g = { n: 0, total: 0, bins: bins.map(() => 0) }));
+        g.n += n;
+        g.total += total;
+        bins.forEach((b, i) => (g.bins[i] += b));
+      }
+      return m;
+    };
+    // Bin i covers [edges[i-1], edges[i]): count those inside ON_TIME, and past it.
+    const edges = [-Infinity, ...data.bins, Infinity];
+    const share = (g, test) => g.bins.reduce((a, b, i) => a + (test(edges[i], edges[i + 1]) ? b : 0), 0) / g.n;
+    const stats = (g) => g && g.n >= OTP_MIN && {
+      n: g.n,
+      onTime: share(g, (lo, hi) => lo >= ON_TIME[0] && hi <= ON_TIME[1]),
+      late: share(g, (lo) => lo >= ON_TIME[1]),
+      avg: g.total / g.n,
+    };
+    const daily = group(data.daily), hourly = group(data.hourly);
+    const all = { n: 0, total: 0, bins: data.bins.map(() => 0).concat(0) };
+    for (const g of daily.values()) {
+      all.n += g.n;
+      all.total += g.total;
+      g.bins.forEach((b, i) => (all.bins[i] += b));
+    }
+    // The last OTP_DAYS local dates, oldest first, with or without data.
+    const days = [];
+    for (let i = OTP_DAYS - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      days.push({ day: d, ...(stats(daily.get(d)) || {}) });
+    }
+    const hours = [...hourly].map(([h, g]) => ({ hour: h, ...stats(g) })).filter((h) => h.n);
+    otp = {
+      route: want, fetchedAt: Date.now(), atTp, since: data.since, days,
+      summary: stats(all),
+      worstHour: hours.sort((a, b) => a.onTime - b.onTime)[0] || null,
+    };
+  } catch (err) {
+    console.warn("otp:", err);
+  }
+}
+
+const fmtHour = (h) => `${h % 12 || 12} ${h < 12 ? "am" : "pm"}`;
+const pct = (x) => `${Math.round(100 * x)}%`;
+
 function setHideTimepoints(on) {
   hideTimepoints = on;
   hoverCell = null;
@@ -576,6 +642,7 @@ function setup() {
   if (startColor === "delay" || startColor === "loss") colorBy = startColor;
   if (new URLSearchParams(location.search).get("timepoints") === "exclude") hideTimepoints = true;
   setInterval(() => colorBy === "loss" && !paused && fetchLoss(), LOSS_POLL_MS);
+  setInterval(() => focusRoute && !paused && fetchOtp(), OTP_POLL_MS);
   for (const ev of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"])
     window.addEventListener(ev, wake, { passive: true });
   document.addEventListener("visibilitychange", wake);
@@ -590,6 +657,7 @@ function setup() {
       routeFromURL();
       poll();
       if (colorBy === "loss") fetchLoss();
+      if (focusRoute) fetchOtp();
     })
     .catch((e) => (feedError = e.message));
 }
@@ -912,7 +980,7 @@ function drawHeader(list) {
   const x = 12, y = 12, w = 340;
   // Panel height depends on which optional rows are showing.
   const h =
-    34 + 18 + 18 + (showBunches ? 18 : 0) + (focusRoute ? 42 : 0) + 4 + 26 + 30 +
+    34 + 18 + 18 + (showBunches ? 18 : 0) + (focusRoute ? 42 + 44 : 0) + 4 + 26 + 30 +
     (colorBy === "delay" ? 26 : 0) + (colorBy === "loss" ? 30 + 30 + 26 + 18 : 0) + 18 + 6;
   panels = [{ x, y, w, h }];
   buttons = [];
@@ -978,7 +1046,7 @@ function drawHeader(list) {
   if (focusRoute) {
     const r = routes[focusRoute];
     fill(255, 255, 255, 14);
-    rect(x + 8, ly - 3, w - 16, 38, 6);
+    rect(x + 8, ly - 3, w - 16, 38 + 44, 6);
     fill(r.color);
     mark(r.agency, x + 20, ly + 7, 10);
     fill(240);
@@ -1007,7 +1075,8 @@ function drawHeader(list) {
     if (nb) st += ` · ${nb} bunched`;
     fill(170);
     text(fitText(st, w - 44), x + 32, ly + 17);
-    ly += 42;
+    drawOtpTrend(x + 32, ly + 38, w - 52);
+    ly += 42 + 44;
   }
   ly += 4;
 
@@ -1092,6 +1161,37 @@ function drawHeader(list) {
   }
   fill(feedError ? color(255, 120, 110) : color(110));
   text(feedError ? `feed error: ${feedError}` : "click bus/area · dbl-click zoom · D F T L N B I Esc", x + 12, ly);
+}
+
+// The pinned route's last OTP_DAYS: a summary line, then one bar per day,
+// as tall as that day's on-time share. Hovering a bar names the day.
+function drawOtpTrend(x, y, w) {
+  fill(170);
+  if (!otp || otp.route !== focusRoute) return text("Loading on-time history…", x, y);
+  const slot = w / otp.days.length, bh = 18, by = y + 18;
+  const hover = mouseY >= by && mouseY <= by + bh && mouseX >= x && mouseX < x + w ? otp.days[Math.floor((mouseX - x) / slot)] : null;
+  let line;
+  if (hover) {
+    const when = new Date(`${hover.day}T12:00`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    line = hover.n ? `${when}: ${pct(hover.onTime)} on time · ${pct(hover.late)} late · avg ${fmtDelay(hover.avg)} · ${hover.n} stops` : `${when}: no data`;
+  } else if (otp.summary) {
+    const s = otp.summary;
+    line = `${OTP_DAYS} days${otp.atTp ? " at timepoints" : ""}: ${pct(s.onTime)} on time · ${pct(s.late)} late`;
+    if (otp.worstHour) line += ` · worst ${fmtHour(otp.worstHour.hour)}`;
+  } else line = otp.since ? "On-time history: still collecting" : "On-time history starts once the server has run a day";
+  text(fitText(line, w), x, y);
+  for (const [i, d] of otp.days.entries()) {
+    const bx = x + i * slot;
+    if (!d.n) {
+      fill(255, 255, 255, 25);
+      rect(bx + 1, by + bh - 2, slot - 2, 2);
+      continue;
+    }
+    fill(d.onTime >= 0.85 ? color(90, 200, 120) : d.onTime >= 0.7 ? color(240, 190, 90) : color(255, 110, 100));
+    if (d === hover) fill(240);
+    const hh = Math.max(2, bh * d.onTime);
+    rect(bx + 1, by + bh - hh, slot - 2, hh);
+  }
 }
 
 function drawLegend(list) {
@@ -1545,6 +1645,8 @@ function legendHit() {
 function setFocus(id) {
   focusRoute = focusRoute === id ? null : id;
   if (colorBy === "loss") fetchLoss(); // the time-lost lens follows the pin
+  otp = null;
+  if (focusRoute) fetchOtp();
   layerDirty = true;
 }
 

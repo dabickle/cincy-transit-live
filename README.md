@@ -36,13 +36,13 @@ Unofficial and provided as-is. See [License](#license) and [Data sources](#data-
  ┌─ Cloudflare ───────────────────────────────────────────────────────────────────┐
  │ Static assets (dist/): served from the edge, cached for a year, never run code │
  │                                                                                │
- │ Worker (src/worker.js): /api/vehicles, /api/alerts, /api/timeloss              │
- │   └─ caches each answer in the local data centre for 10–60 s                   │
+ │ Worker (src/worker.js): /api/vehicles, /api/alerts, /api/timeloss, /api/otp    │
+ │   └─ caches each answer in the local data centre for 10–300 s                  │
  │        │ cache miss                                                            │
  │        ▼                                                                       │
  │ Durable Object "Recorder" (one instance, SQLite storage)                       │
  │   ├─ fetches Metro + TANK GTFS-realtime (protobuf), ≤ once per 10 s            │
- │   ├─ alarm every 30 s: records history, keeps 24 h                             │
+ │   ├─ alarm every 30 s: time-lost history (24 h) + on-time totals (kept)        │
  │   └─ reads stops + timetables from the static assets it shipped with           │
  └──────────────────────────────────────┬─────────────────────────────────────────┘
                                         ▼
@@ -160,8 +160,9 @@ county qualifier, e.g. "Miami Township (Hamilton Co.)". `AREAS_VERSION` and
 | `/api/vehicles` | Live vehicles with `delay` (seconds) attached, plus per-agency `errors` | 10 s | at most every 10 s |
 | `/api/alerts` | Service alerts | 60 s | at most every 60 s |
 | `/api/timeloss?hours=1\|3\|24&route=metro:43` | Time-lost grid, route totals | 60 s | at most every 30 s per window/route |
+| `/api/otp?days=30&route=metro:43` | On-time totals per day and per hour of day | 5 min | at most every 5 min per window/route |
 
-`hours` is snapped to 1/3/6/12/24 and `route` must look like `agency:id`, so
+`hours` is snapped to 1/3/6/12/24, `days` to 7/30/90/365, and `route` must look like `agency:id`, so
 the caches can't be flooded with variants. The Worker caches each answer with
 the Cache API, which is per data centre and **only works on a custom domain**.
 On `*.workers.dev`, every request reaches the Recorder, which is fine at small
@@ -179,7 +180,9 @@ One instance (`idFromName("main")`), holding what a long-running server would:
   around 2,900 a day. Each bus's previous report is saved too, in one row
   rewritten each tick, because the object can be evicted between alarms.
   History survives evictions and deploys.
-- **Alarm**: every 30 s, `alarm()` records history and re-arms itself. A
+- **On-time totals**: the `otp` table, kept indefinitely. See below.
+- **Alarm**: every 30 s, `alarm()` records history and on-time passages, and
+  re-arms itself. A
   Worker cron trigger every 10 minutes makes sure the alarm exists, e.g.
   right after the first deploy.
 
@@ -191,7 +194,11 @@ One instance (`idFromName("main")`), holding what a long-running server would:
   which starts at noon minus 12 h in the agency's time zone, so it is correct
   across DST and after-midnight trips. Results more than 3 h off are thrown
   out.
-- **TANK** reports a delay directly, and it's used as-is.
+- **TANK** reports a delay for each stop directly; the first upcoming stop's
+  is used.
+
+`decodeTripUpdates()` also returns each trip's next stop
+`[stop_sequence, stop_id]`, which the on-time stats use.
 
 ### History: "time lost"
 
@@ -226,6 +233,35 @@ always cover every route:
 - `routesNoTimepoints`: leaves out cells with a timetable timepoint within
   120 m of the cell's average position. Early buses waiting there is
   scheduled, not lost time.
+
+### On-time stats over time
+
+The time-lost history only covers 24 hours. For weeks and months the
+Recorder keeps running totals instead of raw readings (`src/shared/otp.js`):
+
+- **A passage** is a bus passing a stop: its trip's next stop moved on
+  between ticks. The delay last predicted for the stop it left is recorded
+  as its lateness there. Counting once per stop, rather than once per tick,
+  keeps slow, late buses from being counted more often than quick ones.
+- **Totals** are kept per local date × route × hour × timepoint-or-not:
+  number of passages, summed delay, and counts in fixed buckets
+  (`<-1m, -1–0, 0–1, 1–3, 3–5, 5–10, 10–20, >20 min`). On-time %, share late
+  and rough percentiles all come from the buckets.
+- **Timepoints** are the stop ids the build marks as mostly `timepoint=1`
+  (shipped in each timetable file). On-time % is quoted there, as agencies
+  usually do; the sketch falls back to all stops for a route with too few.
+- **Writes**: totals build up in memory and are saved, with each bus's last
+  next-stop, in one state row per tick (so an eviction loses nothing). Every
+  5 minutes they are added to the `otp` table with an upsert, a few hundred
+  rows at a time. That's a few thousand rows a day, roughly 1M a year:
+  inside Workers Paid's included storage and writes.
+- **Keyed by route, not trip**: trip ids change with every timetable, routes
+  don't, so totals stay comparable across schedule changes.
+
+These are predictions and position reports, not the agencies' official
+arrival records, so figures will be close to but not the same as published
+on-time performance. Gaps in the feeds are missing data, not on-time buses;
+the passage count shows how much each day rests on.
 
 ### Bandwidth and cost
 
@@ -279,7 +315,7 @@ always cover every route:
 | State | Effect |
 |---|---|
 | `colorBy` = `route` / `delay` / `loss` | Route colours; a lateness ramp per bus and per area (median); the time-lost grid, area rates, worst spots, Hotspots window |
-| `focusRoute` (pinned route) | Drawn on top in its own colour in every lens. Other routes dim. Lateness and loss stats, and the server's grid, are limited to it |
+| `focusRoute` (pinned route) | Drawn on top in its own colour in every lens. Other routes dim. Lateness and loss stats, and the server's grid, are limited to it. The header shows its 30-day on-time trend: one bar per day (hover for that day), the share on time and late, and its worst hour |
 | `focusHood` (focused area) | Area panel with its routes, buses, lateness or worst spots. Combines with a pinned route |
 | `hideTimepoints` | Time-lost lens ignores timepoint cells. Recomputed client-side by `summarizeLoss()`; legend uses `routesNoTimepoints` |
 | `agencyOn` | Hide Metro or TANK. Hiding the agency of a pinned route unpins it |
@@ -328,6 +364,7 @@ src/worker.js             Worker (live API) + Recorder Durable Object
 src/shared/agencies.js    feed and timetable URLs per agency
 src/shared/realtime.js    protobuf reader, GTFS-realtime decoders, delay maths
 src/shared/timeloss.js    history segments, grid, nearest stops
+src/shared/otp.js         stop passages and on-time totals
 scripts/build-data.mjs    builds dist/ from GTFS + boundary sources
 public/index.html         page shell, p5.js from cdnjs, About dialog
 public/sketch.js          the p5.js sketch
@@ -367,7 +404,7 @@ requests are tested and built, but not deployed.
 **Things to know:**
 
 - History starts empty on the first deploy, and fills over the next hours.
-  Later deploys keep it.
+  On-time trends need a few days. Later deploys keep both.
 - GitHub turns off scheduled workflows in a public repo after 60 days without
   activity. The weekly timetable refresh then stops until you push something
   or re-enable it in the Actions tab.

@@ -5,6 +5,7 @@
 //   /api/vehicles   live vehicle positions, each bus's delay in seconds attached
 //   /api/alerts     service alerts
 //   /api/timeloss?hours=1|3|6|12|24&route=metro:43   where buses lose time
+//   /api/otp?days=7|30|90|365&route=metro:43         on-time stats by day and hour
 //
 // Answers come from one Durable Object, Recorder, which fetches the agencies'
 // GTFS-realtime feeds (at most once per 10 s, however many people are
@@ -18,12 +19,17 @@ import { DurableObject } from "cloudflare:workers";
 import { AGENCIES } from "./shared/agencies.js";
 import { decodeVehicles, decodeTripUpdates, decodeAlerts, loadSchedule } from "./shared/realtime.js";
 import { stopsByCell, timeLoss, newSegments } from "./shared/timeloss.js";
+import { BINS, newPassages, addPassages, localDayHour } from "./shared/otp.js";
 
 const FEED_CACHE_MS = 10_000;
 const ALERTS_CACHE_MS = 60_000;
 const HISTORY_POLL_MS = 30_000;
 const HISTORY_HOURS = 24;
 const TIMELOSS_HOURS = [1, 3, 6, 12, 24];
+const OTP_DAYS = [7, 30, 90, 365];
+const OTP_FLUSH_MS = 5 * 60_000; // how often running totals are added to the otp table
+const TZ = "America/New_York";
+const BIN_COLS = BINS.map((_, i) => `b${i}`).concat(`b${BINS.length}`);
 
 const recorder = (env) => env.RECORDER.get(env.RECORDER.idFromName("main"));
 
@@ -34,18 +40,27 @@ export default {
 
     let ttl, call;
     const key = new URL(url.pathname, url.origin);
+    // Snap to a few choices and sane route ids, so neither cache can be
+    // flooded with variants.
+    const snap = (name, choices, dflt) => {
+      const asked = Number(url.searchParams.get(name)) || dflt;
+      const v = choices.reduce((a, b) => (Math.abs(b - asked) < Math.abs(a - asked) ? b : a));
+      key.searchParams.set(name, v);
+      return v;
+    };
+    const r = url.searchParams.get("route");
+    const route = r && /^[a-z]+:[\w.-]{1,24}$/.test(r) ? r : null;
+    const byRoute = () => route && key.searchParams.set("route", route);
     if (url.pathname === "/api/vehicles") (ttl = 10), (call = (r) => r.vehicles());
     else if (url.pathname === "/api/alerts") (ttl = 60), (call = (r) => r.alerts());
     else if (url.pathname === "/api/timeloss") {
-      // Snap to a few windows and sane route ids, so neither cache can be
-      // flooded with variants.
-      const asked = Number(url.searchParams.get("hours")) || 3;
-      const hours = TIMELOSS_HOURS.reduce((a, b) => (Math.abs(b - asked) < Math.abs(a - asked) ? b : a));
-      const r = url.searchParams.get("route");
-      const route = r && /^[a-z]+:[\w.-]{1,24}$/.test(r) ? r : null;
-      key.searchParams.set("hours", hours);
-      if (route) key.searchParams.set("route", route);
+      const hours = snap("hours", TIMELOSS_HOURS, 3);
+      byRoute();
       (ttl = 60), (call = (rec) => rec.timeloss(hours, route));
+    } else if (url.pathname === "/api/otp") {
+      const days = snap("days", OTP_DAYS, 30);
+      byRoute();
+      (ttl = 300), (call = (rec) => rec.otp(days, route));
     } else return new Response("not found", { status: 404 });
 
     const cache = caches.default;
@@ -77,6 +92,11 @@ export default {
 // not one row per segment, which keeps SQLite writes to ~2,900 a day. Each
 // bus's previous report is saved too (one row, rewritten each tick): the
 // object can be evicted between alarms, and segments need both reports.
+//
+// On-time stats (see shared/otp.js) build up in memory as running totals,
+// saved with each bus's last next-stop as one state row per tick, and are
+// added to the otp table every 5 minutes. They are kept indefinitely: a few
+// thousand small rows a day.
 
 export class Recorder extends DurableObject {
   constructor(ctx, env) {
@@ -86,12 +106,23 @@ export class Recorder extends DurableObject {
     this.answers = new Map();   // memoized JSON answers: key → { until, promise }
     this.lastSample = new Map(); // vehicle id → previous report, for history
     this.segments = [];
+    this.lastStop = new Map();   // vehicle id → its trip's last next stop, for passages
+    this.otpPending = new Map(); // on-time totals not yet in the otp table
+    this.otpSince = 0;           // when the oldest of those was counted
     this.static = null;
 
     ctx.blockConcurrencyWhile(async () => {
       this.sql.exec("CREATE TABLE IF NOT EXISTS ticks (t INTEGER PRIMARY KEY, segs TEXT NOT NULL)");
       this.sql.exec("CREATE TABLE IF NOT EXISTS state (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
+      this.sql.exec(
+        `CREATE TABLE IF NOT EXISTS otp (route TEXT, day TEXT, hour INTEGER, tp INTEGER, n INTEGER, total INTEGER,
+           ${BIN_COLS.map((c) => `${c} INTEGER`).join(", ")}, PRIMARY KEY (route, day, hour, tp)) WITHOUT ROWID`
+      );
       for (const { v } of this.sql.exec("SELECT v FROM state WHERE k = 'lastSample'")) this.lastSample = new Map(JSON.parse(v));
+      for (const { v } of this.sql.exec("SELECT v FROM state WHERE k = 'otp'")) {
+        const o = JSON.parse(v);
+        (this.lastStop = new Map(o.lastStop)), (this.otpPending = new Map(o.pending)), (this.otpSince = o.since);
+      }
       const cutoff = Math.floor(Date.now() / 1000) - HISTORY_HOURS * 3600;
       this.sql.exec("DELETE FROM ticks WHERE t < ?", cutoff);
       const routeIds = new Map(); // share one string per route id
@@ -121,6 +152,7 @@ export class Recorder extends DurableObject {
       return {
         stops: stopsByCell(stops),
         schedules: Object.fromEntries(agencies.map((a, i) => [a, loadSchedule(timetables[i])])),
+        timepoints: Object.fromEntries(agencies.map((a, i) => [a, new Set(timetables[i].timepoints || [])])),
       };
     })().catch((err) => {
       this.static = null; // try again next time
@@ -167,8 +199,11 @@ export class Recorder extends DurableObject {
   async getVehicles() {
     const { values, errors } = await this.eachAgency(async (agency) => {
       const [feed, trips] = await Promise.all([this.feed(agency, "vehicles"), this.feed(agency, "trips").catch(() => null)]);
-      const delays = trips ? trips.delays : {};
-      return { ...feed, vehicles: feed.vehicles.map((v) => ({ ...v, delay: delays[v.trip?.tripId] ?? null })) };
+      const { delays = {}, next = {} } = trips || {};
+      return {
+        ...feed,
+        vehicles: feed.vehicles.map((v) => ({ ...v, delay: delays[v.trip?.tripId] ?? null, nextStop: next[v.trip?.tripId] ?? null })),
+      };
     });
     return {
       timestamp: Math.max(...values.map((v) => v.timestamp || 0)) || null,
@@ -210,6 +245,20 @@ export class Recorder extends DurableObject {
     });
   }
 
+  // Passages per day and per hour of day over the last `days`, at timepoints
+  // (tp 1) and other stops (tp 0): [[day or hour, tp, n, Σdelay, ...bins]].
+  otp(days, route) {
+    return this.answer(`otp|${days}|${route}`, OTP_FLUSH_MS, async () => {
+      const [from] = localDayHour(Date.now() / 1000 - days * 86400, TZ);
+      const sums = `SUM(n), SUM(total), ${BIN_COLS.map((c) => `SUM(${c})`).join(", ")}`;
+      const where = `day > ?${route ? " AND route = ?" : ""}`;
+      const args = route ? [from, route] : [from];
+      const rows = (group) => this.sql.exec(`SELECT ${group}, tp, ${sums} FROM otp WHERE ${where} GROUP BY ${group}, tp ORDER BY ${group}`, ...args).raw().toArray();
+      const [first] = this.sql.exec("SELECT MIN(day) AS d FROM otp").toArray();
+      return { days, route, bins: BINS, since: first?.d ?? null, daily: rows("day"), hourly: rows("hour") };
+    });
+  }
+
   async ensureAlarm() {
     if ((await this.ctx.storage.getAlarm()) == null) await this.ctx.storage.setAlarm(Date.now() + 1000);
   }
@@ -231,6 +280,7 @@ export class Recorder extends DurableObject {
     const fresh = newSegments(vehicles, this.lastSample);
     const now = Math.floor(Date.now() / 1000);
     this.sql.exec("INSERT OR REPLACE INTO state (k, v) VALUES ('lastSample', ?)", JSON.stringify([...this.lastSample]));
+    await this.recordOtp(vehicles, now);
     if (fresh.length) {
       this.sql.exec("INSERT OR REPLACE INTO ticks (t, segs) VALUES (?, ?)", now, JSON.stringify(fresh));
       this.segments.push(...fresh);
@@ -240,5 +290,27 @@ export class Recorder extends DurableObject {
       this.segments = this.segments.filter((s) => s[0] >= cutoff);
       this.sql.exec("DELETE FROM ticks WHERE t < ?", cutoff);
     }
+  }
+
+  async recordOtp(vehicles, now) {
+    const s = await this.staticData().catch(() => null);
+    if (!s) return; // timepoints unknown; try next tick
+    const passages = newPassages(vehicles, this.lastStop, s.timepoints, TZ, now);
+    if (passages.length && !this.otpPending.size) this.otpSince = now;
+    addPassages(this.otpPending, passages);
+    if (this.otpPending.size && now - this.otpSince >= OTP_FLUSH_MS / 1000) {
+      const cols = ["route", "day", "hour", "tp", "n", "total", ...BIN_COLS];
+      const add = ["n", "total", ...BIN_COLS].map((c) => `${c} = ${c} + excluded.${c}`).join(", ");
+      const sql = `INSERT INTO otp (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")}) ON CONFLICT DO UPDATE SET ${add}`;
+      this.ctx.storage.transactionSync(() => {
+        for (const [key, c] of this.otpPending) {
+          const [day, route, hour, tp] = key.split("|");
+          this.sql.exec(sql, route, day, +hour, +tp, ...c);
+        }
+      });
+      this.otpPending.clear();
+    }
+    const state = { since: this.otpSince, lastStop: [...this.lastStop], pending: [...this.otpPending] };
+    this.sql.exec("INSERT OR REPLACE INTO state (k, v) VALUES ('otp', ?)", JSON.stringify(state));
   }
 }
