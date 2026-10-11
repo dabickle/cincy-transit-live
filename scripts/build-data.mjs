@@ -273,12 +273,24 @@ function geoRings(geometry) {
   return polys.flat().map((ring) => thin(ring.map(([lon, lat]) => [+lat.toFixed(5), +lon.toFixed(5)]), 0.0001));
 }
 
-async function fetchGeo(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const geo = await res.json();
-  if (geo.error) throw new Error(geo.error.message || "query failed");
-  return geo.features.filter((f) => f.geometry);
+// Map servers sometimes answer with an HTML error page (busy, or a firewall
+// wary of cloud IPs like CI runners), so try a few times before giving up.
+async function fetchGeo(url, tries = 4) {
+  for (let i = 1; ; i++) {
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": "cincy-transit-live build (+https://github.com/dabickle/cincy-transit-live)" } });
+      const body = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!/^\s*[{[]/.test(body)) throw new Error(`not JSON: ${body.slice(0, 80).replace(/\s+/g, " ")}`);
+      const geo = JSON.parse(body);
+      if (geo.error) throw new Error(geo.error.message || "query failed");
+      return geo.features.filter((f) => f.geometry);
+    } catch (err) {
+      if (i >= tries) throw err;
+      console.warn(`  ${new URL(url).host}: ${err.message}; retrying`);
+      await new Promise((r) => setTimeout(r, 5000 * i));
+    }
+  }
 }
 
 // The bus network's bounding box [west, south, east, north], padded by `pad` degrees.

@@ -110,8 +110,11 @@ Writes `dist/`, which Cloudflare serves as static assets:
 
 Downloads are cached in `data/`: GTFS for 7 days, boundaries for 30. If a
 boundary source is down, the build uses the last complete copy. With no copy
-at all the build fails, so a deploy never ships with areas missing. In CI,
-`data/` is carried between runs with `actions/cache`.
+at all the build fails, so a deploy never ships with areas missing. Each
+boundary query is tried up to 4 times, since map servers sometimes answer
+with an HTML error page instead of JSON. In CI, `data/` is carried between
+runs with `actions/cache`, saved right after the build even when a later
+step fails.
 
 ### Static GTFS
 

@@ -33,16 +33,24 @@ jobs:
           cache: npm
 
       # Downloaded timetables and boundaries, so a source that's down falls
-      # back to the last good copy instead of failing the build.
-      - uses: actions/cache@v4
+      # back to the last good copy instead of failing the build. Saved right
+      # after the build, even if it or a later step fails, so whatever did
+      # download isn't fetched again next time.
+      - uses: actions/cache/restore@v4
         with:
           path: data
-          key: data-${{ github.run_id }}
+          key: data-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: data-
 
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+      - uses: actions/cache/save@v4
+        if: always() && hashFiles('data/**') != ''
+        with:
+          path: data
+          key: data-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Deploy to Cloudflare
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
