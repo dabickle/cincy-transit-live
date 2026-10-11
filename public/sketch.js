@@ -27,7 +27,8 @@
 // BUNCH_METERS of each other (and not both parked) are linked on the map.
 //
 // URL options: ?color=delay or ?color=loss picks the colour mode, ?route=43
-// pins a route (Metro first; ?route=tank1 for TANK's), ?hood=otr focuses a
+// pins a route (Metro first; ?route=tank1 for TANK's; each route also has its
+// own page, /route/metro-43/, built with its name on <html data-route>), ?hood=otr focuses a
 // neighborhood or city (any name, e.g. ?hood=mainstrasse, ?hood=norwood).
 // ?timepoints=exclude starts the time-lost lens with timepoints left out.
 
@@ -1173,10 +1174,10 @@ function drawOtpTrend(x, y, w) {
   let line;
   if (hover) {
     const when = new Date(`${hover.day}T12:00`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-    line = hover.n ? `${when}: ${pct(hover.onTime)} on time · ${pct(hover.late)} late · avg ${fmtDelay(hover.avg)} · ${hover.n} stops` : `${when}: no data`;
+    line = hover.n ? `${when}: ${pct(hover.onTime)} on time · ${pct(hover.late)} late · avg ${fmtDelay(hover.avg)} · ${hover.n} ${otp.atTp ? "timepoint " : ""}stops` : `${when}: no data`;
   } else if (otp.summary) {
     const s = otp.summary;
-    line = `${OTP_DAYS} days${otp.atTp ? " at timepoints" : ""}: ${pct(s.onTime)} on time · ${pct(s.late)} late`;
+    line = `${OTP_DAYS} days: ${pct(s.onTime)} on time · ${pct(s.late)} late`; // at timepoints when there are enough
     if (otp.worstHour) line += ` · worst ${fmtHour(otp.worstHour.hour)}`;
   } else line = otp.since ? "On-time history: still collecting" : "On-time history starts once the server has run a day";
   text(fitText(line, w), x, y);
@@ -1661,6 +1662,9 @@ function zoomToHood(h) {
 }
 
 function routeFromURL() {
+  // A route's own page (/route/metro-43/) names it on <html data-route>.
+  const page = document.documentElement.dataset.route;
+  if (page && routes[page]) return void (focusRoute = page);
   const q = new URLSearchParams(location.search).get("route");
   if (!q) return;
   const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");

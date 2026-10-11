@@ -422,7 +422,9 @@ requests are tested and built, but not deployed.
 - `npx wrangler tail` streams the live Worker's logs.
 - **Search engines**: the page carries a description, canonical URL, Open
   Graph preview (`public/og.png`) and JSON-LD; the build writes `robots.txt`,
-  `sitemap.xml` and a crawlable route list into the About dialog. Verify the
+  `sitemap.xml`, a page per route (`/route/metro-43/`, `/route/tank-1/`:
+  the same map with that route pinned, under its own title, description
+  and canonical URL) and a list linking to them in the About dialog. Verify the
   domain in Google Search Console and Bing Webmaster Tools and submit
   `/sitemap.xml`. For `www`, add a Cloudflare Redirect Rule ("Redirect from
   WWW to root" template) rather than a second custom domain, so there's only
